@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="ojdbc8 (2)">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/out/artifacts/MyWebApp_war_exploded/WEB-INF/lib/ojdbc8.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
