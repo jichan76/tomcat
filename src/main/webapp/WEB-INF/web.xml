@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="http://xmlns.jcp.org/xml/ns/javaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee
+                             http://xmlns.jcp.org/xml/ns/javaee/web-app_3_1.xsd"
+         version="3.1">
+
+    <servlet>
+        <servlet-name>DBTestServlet</servlet-name>
+        <servlet-class>com.example.servlet.DBTestServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>DBTestServlet</servlet-name>
+        <url-pattern>/pro01/dbtest</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>SubjectAddServlet</servlet-name>
+        <servlet-class>com.example.servlet.SubjectAddServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>SubjectAddServlet</servlet-name>
+        <url-pattern>/subjects</url-pattern>
+    </servlet-mapping>
+</web-app>
