@@ -1,4 +1,4 @@
-package com.example.servlet.util;
+package com.example.attendance.servlet.util;
 
 import java.sql.Connection;
 import java.sql.DriverManager;

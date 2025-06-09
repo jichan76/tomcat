@@ -1,4 +1,4 @@
-package com.example.servlet;
+package com.example.attendance.servlet;
 
 import java.io.*;
 import java.sql.*;
