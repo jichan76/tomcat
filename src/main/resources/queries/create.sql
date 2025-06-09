@@ -28,12 +28,12 @@ CREATE TABLE attendance_records (                      -- 출석리스트
     student_id          VARCHAR2(20) NOT NULL,         -- 출석한 학생 ID
     subject_id          NUMBER NOT NULL,               -- 과목 ID
     attendance_datetime TIMESTAMP NOT NULL,            -- 출석 처리된 날짜 + 시간(수정하면 안됨)
-    status              VARCHAR2(10) NOT NULL,         -- 출석 상태 ('출석', '결석', '지각/조퇴')
+    status              VARCHAR2(10) NOT NULL,         -- 출석 상태 ('출석', '결석', '지각_조퇴')
     bssid               VARCHAR2(50),                  -- 당시 연결된 Wi-Fi BSSID
     android_id          VARCHAR2(100),                 -- 당시의 안드로이드 ID (위조 확인용)
-    last_modified_at    TIMESTAMP                      -- 출석 수정된 시간
-    week_number         NUMBER                         -- 주차표시
-    CONSTRAINT chk_status CHECK (status IN ('출석', '결석', '지각/조퇴')),  -- 상태 제한
+    last_modified_at    TIMESTAMP,                      -- 출석 수정된 시간
+    week_number         NUMBER,                         -- 주차표시
+    CONSTRAINT chk_status CHECK (status IN ('출석', '결석', '지각_조퇴')),  -- 상태 제한
     CONSTRAINT fk_attendance_student FOREIGN KEY (student_id) REFERENCES users(user_id),
     CONSTRAINT fk_attendance_subject FOREIGN KEY (subject_id) REFERENCES subjects(subject_id)
 );
