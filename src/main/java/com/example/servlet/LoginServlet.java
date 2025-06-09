@@ -7,6 +7,7 @@ import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.*;
 
 import com.google.gson.JsonObject;
+import org.mindrot.jbcrypt.BCrypt;
 
 @WebServlet("/LoginServlet")
 public class LoginServlet extends HttpServlet {
@@ -30,6 +31,7 @@ public class LoginServlet extends HttpServlet {
 
         String userId = request.getParameter("id");
         String password = request.getParameter("password");
+        String androidId = request.getParameter("android_id");
 
         if (userId == null || password == null) {
             jsonResponse.addProperty("result", "error");
@@ -39,19 +41,43 @@ public class LoginServlet extends HttpServlet {
         }
 
         try (Connection conn = getConnection()) {
-            String sql = "SELECT * FROM users WHERE user_id = ? AND password = ?";
+            String sql = "SELECT password, android_id, name, role FROM users WHERE user_id = ?";
             try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
                 pstmt.setString(1, userId);
-                pstmt.setString(2, password);
-
                 ResultSet rs = pstmt.executeQuery();
 
                 if (rs.next()) {
-                    jsonResponse.addProperty("result", "success");
-                    jsonResponse.addProperty("role", rs.getString("role"));
-                    jsonResponse.addProperty("name", rs.getString("name"));
+                    String hashedPassword = rs.getString("password");
+                    String dbAndroidId = rs.getString("android_id");
+                    String name = rs.getString("name");
+                    if (BCrypt.checkpw(password, hashedPassword)) {
+                        // 비밀번호 일치
+                        if (dbAndroidId == null || dbAndroidId.isEmpty()) {
+                            String updateSql = "UPDATE users SET android_id = ? WHERE user_id = ?";
+                            try (PreparedStatement updatePstmt = conn.prepareStatement(updateSql)) {
+                                updatePstmt.setString(1, androidId);
+                                updatePstmt.setString(2, userId);
+                                updatePstmt.executeUpdate();
+                            }
+                        }else if (!dbAndroidId.equals(androidId)) {
+                            // 등록된 기기와 다름
+                            jsonResponse.addProperty("result", "fail");
+                            jsonResponse.addProperty("message", "등록된 기기와 다릅니다");
+                            out.print(jsonResponse.toString());
+                            return;
+                        }
+                        jsonResponse.addProperty("result", "success");
+                        jsonResponse.addProperty("role", rs.getString("role"));
+                        jsonResponse.addProperty("name", rs.getString("name"));
+                    } else {
+                        // 비밀번호 불일치
+                        jsonResponse.addProperty("result", "fail");
+                        jsonResponse.addProperty("message", "비밀번호 틀림");
+                    }
                 } else {
+                    // 아이디 없음
                     jsonResponse.addProperty("result", "fail");
+                    jsonResponse.addProperty("message", "사용자 없음");
                 }
             }
         } catch (Exception e) {
