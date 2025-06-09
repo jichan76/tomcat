@@ -7,7 +7,6 @@ import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.*;
 
 import com.google.gson.JsonObject;
-import org.mindrot.jbcrypt.BCrypt;
 
 @WebServlet("/LoginServlet")
 public class LoginServlet extends HttpServlet {
