@@ -5,6 +5,7 @@ import java.sql.*;
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.*;
+import org.mindrot.jbcrypt.BCrypt;
 
 import com.google.gson.JsonObject;
 
