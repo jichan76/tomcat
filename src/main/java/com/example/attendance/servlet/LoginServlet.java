@@ -41,41 +41,63 @@ public class LoginServlet extends HttpServlet {
         }
 
         try (Connection conn = getConnection()) {
-            String sql = "SELECT password, android_id, name, role FROM users WHERE user_id = ?";
+            String sql = "SELECT password, android_id, name, role, is_first_login, is_initial_admin FROM users WHERE user_id = ?";
             try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
                 pstmt.setString(1, userId);
                 ResultSet rs = pstmt.executeQuery();
 
                 if (rs.next()) {
-                    String hashedPassword = rs.getString("password");
+                    String dbPassword = rs.getString("password");
                     String dbAndroidId = rs.getString("android_id");
                     String name = rs.getString("name");
-                    if (BCrypt.checkpw(password, hashedPassword)) {
-                        // 비밀번호 일치
-                        if (dbAndroidId == null || dbAndroidId.isEmpty()) {
-                            String updateSql = "UPDATE users SET android_id = ? WHERE user_id = ?";
-                            try (PreparedStatement updatePstmt = conn.prepareStatement(updateSql)) {
-                                updatePstmt.setString(1, androidId);
-                                updatePstmt.setString(2, userId);
-                                updatePstmt.executeUpdate();
+                    String role = rs.getString("role");
+                    int isFirstLogin = rs.getInt("is_first_login");
+                    int isInitialAdmin = rs.getInt("is_initial_admin");
+
+                    boolean passwordMatched = false;
+
+                    // [관리자: 초기일 때만 평문 허용, 그 외 해시]
+                    if ("admin".equals(role) && isInitialAdmin == 1) {
+                        if (dbPassword != null && dbPassword.startsWith("$2")) {
+                            passwordMatched = BCrypt.checkpw(password, dbPassword);
+                        } else {
+                            passwordMatched = password.equals(dbPassword);
+                        }
+                    } else {
+                        // 학생/교수/일반관리자 모두 해싱만 허용
+                        if (dbPassword != null && dbPassword.startsWith("$2")) {
+                            passwordMatched = BCrypt.checkpw(password, dbPassword);
+                        }
+                    }
+
+                    if (passwordMatched) {
+                        if ("student".equals(role)) {
+                       // Android ID 등록/검증은 기존과 동일
+                            if (dbAndroidId == null || dbAndroidId.isEmpty()) {
+                                String updateSql = "UPDATE users SET android_id = ? WHERE user_id = ?";
+                                try (PreparedStatement updatePstmt = conn.prepareStatement(updateSql)) {
+                                    updatePstmt.setString(1, androidId);
+                                    updatePstmt.setString(2, userId);
+                                    updatePstmt.executeUpdate();
+                                }
                             }
-                        }else if (!dbAndroidId.equals(androidId)) {
-                            // 등록된 기기와 다름
+                        } else if (!dbAndroidId.equals(androidId)) {
                             jsonResponse.addProperty("result", "fail");
                             jsonResponse.addProperty("message", "등록된 기기와 다릅니다");
                             out.print(jsonResponse.toString());
                             return;
                         }
                         jsonResponse.addProperty("result", "success");
-                        jsonResponse.addProperty("role", rs.getString("role"));
-                        jsonResponse.addProperty("name", rs.getString("name"));
+                        jsonResponse.addProperty("role", role);
+                        jsonResponse.addProperty("name", name);
+                        jsonResponse.addProperty("user_id", userId);
+                        jsonResponse.addProperty("is_first_login", isFirstLogin);         // << 추가!
+                        jsonResponse.addProperty("is_initial_admin", isInitialAdmin);     // << 추가!
                     } else {
-                        // 비밀번호 불일치
                         jsonResponse.addProperty("result", "fail");
                         jsonResponse.addProperty("message", "비밀번호 틀림");
                     }
                 } else {
-                    // 아이디 없음
                     jsonResponse.addProperty("result", "fail");
                     jsonResponse.addProperty("message", "사용자 없음");
                 }

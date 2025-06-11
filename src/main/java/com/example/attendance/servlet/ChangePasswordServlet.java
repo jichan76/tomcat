@@ -40,10 +40,18 @@ public class ChangePasswordServlet extends HttpServlet {
         }
 
         try (Connection conn = getConnection()) {
+            // [1] 서버측에서도 비번 규칙 체크
+            if (!newPassword.matches("^[a-zA-Z0-9!@#$%^*]{8,20}$")) {
+                jsonResponse.addProperty("result", "error");
+                jsonResponse.addProperty("message", "비밀번호 규칙을 지켜주세요.");
+                out.print(jsonResponse.toString());
+                return;
+            }
             // 비밀번호 해싱
             String hashedPassword = BCrypt.hashpw(newPassword, BCrypt.gensalt());
 
-            String sql = "UPDATE users SET password = ? WHERE user_id = ?";
+            // [2] 비밀번호+첫로그인 갱신
+            String sql = "UPDATE users SET password = ?, is_first_login = 0 WHERE user_id = ?";
             try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
                 pstmt.setString(1, hashedPassword);
                 pstmt.setString(2, userId);
@@ -52,6 +60,7 @@ public class ChangePasswordServlet extends HttpServlet {
                 if (affectedRows > 0) {
                     jsonResponse.addProperty("result", "success");
                     jsonResponse.addProperty("message", "비밀번호가 성공적으로 변경되었습니다.");
+                    jsonResponse.addProperty("is_first_login", 0); // 선택
                 } else {
                     jsonResponse.addProperty("result", "fail");
                     jsonResponse.addProperty("message", "사용자를 찾을 수 없습니다.");
