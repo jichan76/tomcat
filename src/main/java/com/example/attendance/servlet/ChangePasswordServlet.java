@@ -47,10 +47,34 @@ public class ChangePasswordServlet extends HttpServlet {
                 out.print(jsonResponse.toString());
                 return;
             }
+            // ★ [2] 기존 비밀번호 조회 (DB에 저장된 해시값)
+            String getPwSql = "SELECT password FROM users WHERE user_id = ?";
+            String currentHashedPw = null;
+            try (PreparedStatement pwStmt = conn.prepareStatement(getPwSql)) {
+                pwStmt.setString(1, userId);
+                try (ResultSet rs = pwStmt.executeQuery()) {
+                    if (rs.next()) {
+                        currentHashedPw = rs.getString(1);
+                    }
+                }
+            }
+            if (currentHashedPw == null) {
+                jsonResponse.addProperty("result", "fail");
+                jsonResponse.addProperty("message", "사용자를 찾을 수 없습니다.");
+                out.print(jsonResponse.toString());
+                return;
+            }
+            // ★ [3] 기존 비밀번호와 같은지 체크 (newPassword를 해싱 없이 그대로 checkpw로 비교)
+            if (BCrypt.checkpw(newPassword, currentHashedPw)) {
+                jsonResponse.addProperty("result", "fail");
+                jsonResponse.addProperty("message", "기존에 사용하던 비밀번호로는 변경할 수 없습니다.");
+                out.print(jsonResponse.toString());
+                return;
+            }
             // 비밀번호 해싱
             String hashedPassword = BCrypt.hashpw(newPassword, BCrypt.gensalt());
 
-            // [2] 비밀번호+첫로그인 갱신
+            // [4] 비밀번호+첫로그인 갱신
             String sql = "UPDATE users SET password = ?, is_first_login = 0 WHERE user_id = ?";
             try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
                 pstmt.setString(1, hashedPassword);
