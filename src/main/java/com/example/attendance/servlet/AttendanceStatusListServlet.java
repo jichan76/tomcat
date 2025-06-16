@@ -39,7 +39,7 @@ public class AttendanceStatusListServlet extends HttpServlet {
                         "WHERE e.subject_id = ? AND u.role = 'student'";
 
         String sqlStatus =
-                "SELECT u.user_id AS student_id, u.name, NVL(ar.status, '미처리') AS status " +
+                "SELECT u.user_id AS student_id, u.name, NVL(ar.status, '결석') AS status " +
                         "FROM enrollments e " +
                         "JOIN users u ON u.user_id = e.student_id " +
                         "LEFT JOIN attendance_records ar " +
@@ -63,7 +63,7 @@ public class AttendanceStatusListServlet extends HttpServlet {
                 allStudents.add(obj);
             }
 
-            // 출석/결석/미처리 리스트 분류
+            // 출석/결석 리스트 분류
             pstmtStatus.setString(1, subjectId);
             ResultSet rs = pstmtStatus.executeQuery();
 
@@ -88,7 +88,7 @@ public class AttendanceStatusListServlet extends HttpServlet {
             }
 
             JsonObject root = new JsonObject();
-            root.add("allStudents", allStudents);        // ← 전체 학생 배열 추가!
+            root.add("allStudents", allStudents);
             root.add("presentStudents", present);
             root.add("absentStudents", absent);
             root.add("unknownStudents", unknown);

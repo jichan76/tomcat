@@ -32,7 +32,7 @@ CREATE TABLE attendance_records (                      -- 출석리스트
     bssid               VARCHAR2(50),                  -- 당시 연결된 Wi-Fi BSSID
     android_id          VARCHAR2(100),                 -- 당시의 안드로이드 ID (위조 확인용)
     last_modified_at    TIMESTAMP,                      -- 출석 수정된 시간
-    week_number         NUMBER,                         -- 주차표시
+    week_number         NUMBER CONSTRAINT chk_week_range CHECK (week_number BETWEEN 1 AND 16), -- 주차표시
     CONSTRAINT chk_status CHECK (status IN ('출석', '결석', '지각_조퇴')),  -- 상태 제한
     CONSTRAINT fk_attendance_student FOREIGN KEY (student_id) REFERENCES users(user_id),
     CONSTRAINT fk_attendance_subject FOREIGN KEY (subject_id) REFERENCES subjects(subject_id)

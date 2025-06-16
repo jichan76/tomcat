@@ -13,6 +13,7 @@ import java.util.logging.Logger;
 
 @WebServlet("/SubjectsList")
 public class SubjectsList extends HttpServlet {
+    private static final Logger logger = Logger.getLogger(SubjectsList.class.getName());
 
     private Connection getConnection() throws Exception {
         String url = "jdbc:oracle:thin:@appdb_high?TNS_ADMIN=/opt/wallet";
@@ -32,7 +33,6 @@ public class SubjectsList extends HttpServlet {
         // 1) 파라미터에서 우선 studentId, role 읽기
         String studentId = request.getParameter("studentId");
         String role = request.getParameter("role");
-
         // 2) 값이 없으면 세션에서 가져오기 (세션 기반 로그인 유지 대비)
         if ((studentId == null || studentId.isEmpty()) || (role == null || role.isEmpty())) {
             HttpSession session = request.getSession(false);

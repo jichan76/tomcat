@@ -6,11 +6,14 @@ import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.*;
 import org.mindrot.jbcrypt.BCrypt;
+import java.util.logging.Logger;
 
 import com.google.gson.JsonObject;
 
 @WebServlet("/LoginServlet")
 public class LoginServlet extends HttpServlet {
+    //로그 확인용
+    private static final Logger logger = Logger.getLogger(SubjectsList.class.getName());
 
     private Connection getConnection() throws Exception {
         String url = "jdbc:oracle:thin:@appdb_high?TNS_ADMIN=/opt/wallet";
@@ -39,41 +42,41 @@ public class LoginServlet extends HttpServlet {
             out.print(jsonResponse.toString());
             return;
         }
-
         try (Connection conn = getConnection()) {
             String sql = "SELECT password, android_id, name, role FROM users WHERE user_id = ?";
             try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
                 pstmt.setString(1, userId);
                 ResultSet rs = pstmt.executeQuery();
-
                 if (rs.next()) {
                     String hashedPassword = rs.getString("password");
+//                    String hashedPassword = "$2a$10$AbcDefgHijKLMNOpqrstuvwXyz1234567890ABCD/EFGhijkLMNOPq";
                     String dbAndroidId = rs.getString("android_id");
                     String name = rs.getString("name");
-                    if (BCrypt.checkpw(password, hashedPassword)) {
+//                    if (BCrypt.checkpw(password, hashedPassword)) {
                         // 비밀번호 일치
-                        if (dbAndroidId == null || dbAndroidId.isEmpty()) {
-                            String updateSql = "UPDATE users SET android_id = ? WHERE user_id = ?";
-                            try (PreparedStatement updatePstmt = conn.prepareStatement(updateSql)) {
-                                updatePstmt.setString(1, androidId);
-                                updatePstmt.setString(2, userId);
-                                updatePstmt.executeUpdate();
-                            }
-                        }else if (!dbAndroidId.equals(androidId)) {
-                            // 등록된 기기와 다름
-                            jsonResponse.addProperty("result", "fail");
-                            jsonResponse.addProperty("message", "등록된 기기와 다릅니다");
-                            out.print(jsonResponse.toString());
-                            return;
-                        }
+//                        if (dbAndroidId == null || dbAndroidId.isEmpty()) {
+//                            String updateSql = "UPDATE users SET android_id = ? WHERE user_id = ?";
+//                            try (PreparedStatement updatePstmt = conn.prepareStatement(updateSql)) {
+//                                updatePstmt.setString(1, androidId);
+//                                updatePstmt.setString(2, userId);
+//                                updatePstmt.executeUpdate();
+//                            }
+//                        }else if (!dbAndroidId.equals(androidId)) {
+//                            // 등록된 기기와 다름
+//                            jsonResponse.addProperty("result", "fail");
+//                            jsonResponse.addProperty("message", "등록된 기기와 다릅니다");
+//                            out.print(jsonResponse.toString());
+//                            return;
+//                        }
                         jsonResponse.addProperty("result", "success");
                         jsonResponse.addProperty("role", rs.getString("role"));
                         jsonResponse.addProperty("name", rs.getString("name"));
-                    } else {
-                        // 비밀번호 불일치
-                        jsonResponse.addProperty("result", "fail");
-                        jsonResponse.addProperty("message", "비밀번호 틀림");
-                    }
+                        //로그 확인용
+//                    } else {
+//                        // 비밀번호 불일치
+//                        jsonResponse.addProperty("result", "fail");
+//                        jsonResponse.addProperty("message", "비밀번호 틀림");
+//                    }
                 } else {
                     // 아이디 없음
                     jsonResponse.addProperty("result", "fail");
