@@ -32,7 +32,6 @@ public class UpdateManualAttendanceServlet extends HttpServlet {
         // 파라미터 로그
         String subjectIdStr = request.getParameter("subjectId");
         String weekStr = request.getParameter("week");
-
         if (subjectIdStr == null || weekStr == null) {
             jsonResponse.addProperty("result", "error");
             jsonResponse.addProperty("message", "Missing subjectId or week");
@@ -51,7 +50,6 @@ public class UpdateManualAttendanceServlet extends HttpServlet {
             sb.append(line);
         }
         String requestBody = sb.toString();
-
         JsonArray studentsJson;
         try {
             studentsJson = JsonParser.parseString(requestBody).getAsJsonArray();
@@ -70,7 +68,7 @@ public class UpdateManualAttendanceServlet extends HttpServlet {
                     JsonObject studentObj = elem.getAsJsonObject();
                     String studentId = studentObj.get("studentId").getAsString();
                     String status = studentObj.get("status").getAsString();
-                    if ("조퇴/지각".equals(status)) {
+                    if ("지각/조퇴".equals(status)) {
                         status = "지각_조퇴";
                     }
                     pstmt.setString(1, status);

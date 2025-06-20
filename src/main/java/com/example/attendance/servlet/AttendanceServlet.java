@@ -2,6 +2,8 @@ package com.example.attendance.servlet;
 
 import java.io.*;
 import java.sql.*;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.*;
@@ -38,61 +40,83 @@ public class AttendanceServlet extends HttpServlet {
         }
 
         try (Connection conn = getConnection()) {
-            // 교수 BSSID와 일치하는 수강 과목 찾기 및 출석 오픈 로그 검증
-//            String sql = "SELECT COUNT(*) FROM attendance_open_log " +
-//                    " WHERE subject_id = (" +
-//                    " SELECT e.subject_id FROM enrollments e " +
-//                    " WHERE e.student_id = ? AND ROWNUM = 1" +
-//                    " ) " + " AND bssid = ? " + " AND open_datetime <= SYSTIMESTAMP " +
-//                    " AND (close_datetime IS NULL OR close_datetime >= SYSTIMESTAMP)"; // 오라클용 LIMIT 1
-            String selectOpenLogSql = "SELECT subject_id FROM attendance_open_log " +
-                    " WHERE subject_id = (SELECT e.subject_id FROM enrollments e WHERE e.student_id = ? AND ROWNUM = 1) " +
-                    "   AND bssid = ? " +
-                    "   AND open_datetime <= SYSTIMESTAMP " +
-                    "   AND (close_datetime IS NULL OR close_datetime >= SYSTIMESTAMP)"; // 오라클용 LIMIT 1
-            String actualSubjectId = null; // 실제 출석이 열린 과목의 ID를 저장할 변수
 
-            try (PreparedStatement ps = conn.prepareStatement(selectOpenLogSql)) {
+            // 1. 교수 BSSID와 일치하는 수강 과목 찾기
+            String selectSubjectSql =
+                    "SELECT s.subject_id, s.name " +
+                            "FROM enrollments e " +
+                            "JOIN subjects s ON e.subject_id = s.subject_id " +
+                            "WHERE e.student_id = ? " +
+                            "AND s.professor_bssid = ?";
+
+            String actualSubjectId = null;
+            String subjectName = null;
+            int subjectCount = 0;
+
+            try (PreparedStatement ps = conn.prepareStatement(selectSubjectSql)) {
                 ps.setString(1, studentId);
                 ps.setString(2, bssid);
                 ResultSet rs = ps.executeQuery();
-                if (rs.next()) {
-                    actualSubjectId = rs.getString("subject_id"); // 조회된 subject_id 저장
-                } else {
-                    jsonResponse.addProperty("result", "fail");
-                    jsonResponse.addProperty("message", "현재 출석이 열려 있지 않습니다.");
-                    out.print(jsonResponse.toString());
-                    return;
+                while (rs.next()) {
+                    subjectCount++;
+                    actualSubjectId = rs.getString("subject_id");
+                    subjectName = rs.getString("name");
                 }
             }
-//                rs.next();
-//                if (rs.getInt(1) == 0) {
-//                    jsonResponse.addProperty("result", "fail");
-//                    jsonResponse.addProperty("message", "현재 출석이 열려 있지 않습니다.");
-//                    out.print(jsonResponse.toString());
-//                    return;
-//                }
-//            }
-            // 2) 출석 기록 삽입
-//            String insertSql =
-//                    "INSERT INTO attendance_records " +
-//                            "(student_id, subject_id, attendance_datetime, status, bssid, android_id) " +
-//                            "VALUES (?, " +
-//                            "   (SELECT e.subject_id FROM enrollments e WHERE e.student_id = ? AND ROWNUM = 1)," +
-//                            "    SYSTIMESTAMP, '출석', ?, ?)";
+
+            if (subjectCount == 0) {
+                jsonResponse.addProperty("result", "fail");
+                jsonResponse.addProperty("message", "현재 출석 가능한 수업이 없습니다.");
+                out.print(jsonResponse.toString());
+                return;
+            } else if (subjectCount > 1) {
+                jsonResponse.addProperty("result", "fail");
+                jsonResponse.addProperty("message", "여러 과목이 동시에 매칭됩니다. 관리자에게 문의하세요.");
+                out.print(jsonResponse.toString());
+                return;
+            }
+
+            // 2. 학기 시작일을 DB에서 가져옴
+            String getStartDateSql = "SELECT start_date FROM semester_info";
+            Date startDate = null;
+            try (PreparedStatement ps = conn.prepareStatement(getStartDateSql);
+                 ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    startDate = rs.getDate("start_date");
+                }
+            }
+            if (startDate == null) {
+                jsonResponse.addProperty("result", "error");
+                jsonResponse.addProperty("message", "학기 시작일 정보가 없습니다.");
+                out.print(jsonResponse.toString());
+                return;
+            }
+
+            // 3. 오늘 날짜와 학기 시작일 차이로 주차 계산
+            LocalDate today = LocalDate.now();
+            LocalDate semesterStart = startDate.toLocalDate();
+            long days = ChronoUnit.DAYS.between(semesterStart, today);
+            int weekNumber = (int)Math.ceil((days + 1) / 7.0);
+
+            // 4. 출석 INSERT
             String insertSql =
                     "INSERT INTO attendance_records " +
-                            "(student_id, subject_id, attendance_datetime, status, bssid, android_id) " +
-                            "VALUES (?, ?, SYSTIMESTAMP, '출석', ?, ?)"; // subject_id를 변수로 대체
+                            "(student_id, subject_id, attendance_datetime, status, bssid, android_id, week_number) " +
+                            "VALUES (?, ?, (SYSTIMESTAMP AT TIME ZONE 'Asia/Seoul'), '출석', ?, ?, ?)";
+
             try (PreparedStatement ps2 = conn.prepareStatement(insertSql)) {
                 ps2.setString(1, studentId);
-                ps2.setString(2, actualSubjectId); // 여기서 조회된 actualSubjectId 사용
+                ps2.setString(2, actualSubjectId);
                 ps2.setString(3, bssid);
                 ps2.setString(4, androidId);
+                ps2.setInt(5, weekNumber);
                 ps2.executeUpdate();
             }
 
             jsonResponse.addProperty("result", "success");
+            jsonResponse.addProperty("subject_name", subjectName);
+            jsonResponse.addProperty("week_number", weekNumber);
+
         } catch (Exception e) {
             jsonResponse.addProperty("result", "error");
             jsonResponse.addProperty("message", e.getMessage());
