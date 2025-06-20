@@ -51,6 +51,28 @@ public class AdminChangePasswordServlet extends HttpServlet {
         }
 
         try (Connection conn = getConnection()) {
+            String getPwSql = "SELECT password FROM users WHERE user_id = ?";
+            String currentHashedPw = null;
+            try (PreparedStatement pwStmt = conn.prepareStatement(getPwSql)) {
+                pwStmt.setString(1, userId);
+                try (ResultSet rs = pwStmt.executeQuery()) {
+                    if (rs.next()) {
+                        currentHashedPw = rs.getString(1);
+                    }
+                }
+            }
+            if (currentHashedPw == null) {
+                jsonResponse.addProperty("result", "fail");
+                jsonResponse.addProperty("message", "존재하지 않는 사용자입니다.");
+                out.print(jsonResponse.toString());
+                return;
+            }
+            if (org.mindrot.jbcrypt.BCrypt.checkpw(tempPassword, currentHashedPw)) {
+                jsonResponse.addProperty("result", "fail");
+                jsonResponse.addProperty("message", "기존에 사용하던 비밀번호로는 변경할 수 없습니다.");
+                out.print(jsonResponse.toString());
+                return;
+            }
             // 1. 임시비밀번호 해시 생성
             String hashedPassword = BCrypt.hashpw(tempPassword, BCrypt.gensalt());
 
