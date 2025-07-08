@@ -10,7 +10,7 @@ import java.util.logging.Logger;
 
 @WebServlet("/endAttendance")
 public class EndAttendanceServlet extends HttpServlet {
-    private static final Logger logger = Logger.getLogger(StartAttendanceServlet.class.getName());
+    private static final Logger logger = Logger.getLogger(EndAttendanceServlet.class.getName());
 
     private Connection getConnection() throws Exception {
         String url = "jdbc:oracle:thin:@appdb_high?TNS_ADMIN=/opt/wallet";
@@ -46,7 +46,7 @@ public class EndAttendanceServlet extends HttpServlet {
 
         try (Connection conn = getConnection()) {
             conn.setAutoCommit(false);
-
+            logger.warning("진입 확인"+ subjectIdStr + " " +  weekNumberStr);
             // 1. 과목 BSSID 초기화
             String updateSubjectSql = "UPDATE subjects SET professor_bssid = NULL WHERE subject_id = ?";
             try (PreparedStatement ps = conn.prepareStatement(updateSubjectSql)) {

@@ -8,9 +8,11 @@ import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.*;
 import com.google.gson.JsonObject;
+import java.util.logging.Logger;
 
 @WebServlet("/AttendanceServlet")
 public class AttendanceServlet extends HttpServlet {
+    private static final Logger logger = Logger.getLogger(AttendanceServlet.class.getName());
 
     private Connection getConnection() throws Exception {
         String url = "jdbc:oracle:thin:@appdb_high?TNS_ADMIN=/opt/wallet";
@@ -40,6 +42,7 @@ public class AttendanceServlet extends HttpServlet {
         }
 
         try (Connection conn = getConnection()) {
+            logger.warning("확인용" + bssid);
 
             // 1. 교수 BSSID와 일치하는 수강 과목 찾기
             String selectSubjectSql =
@@ -76,46 +79,23 @@ public class AttendanceServlet extends HttpServlet {
                 return;
             }
 
-            // 2. 학기 시작일을 DB에서 가져옴
-            String getStartDateSql = "SELECT start_date FROM semester_info";
-            Date startDate = null;
-            try (PreparedStatement ps = conn.prepareStatement(getStartDateSql);
-                 ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    startDate = rs.getDate("start_date");
-                }
-            }
-            if (startDate == null) {
-                jsonResponse.addProperty("result", "error");
-                jsonResponse.addProperty("message", "학기 시작일 정보가 없습니다.");
-                out.print(jsonResponse.toString());
-                return;
-            }
-
-            // 3. 오늘 날짜와 학기 시작일 차이로 주차 계산
-            LocalDate today = LocalDate.now();
-            LocalDate semesterStart = startDate.toLocalDate();
-            long days = ChronoUnit.DAYS.between(semesterStart, today);
-            int weekNumber = (int)Math.ceil((days + 1) / 7.0);
-
-            // 4. 출석 INSERT
+            // 2. 출석 INSERT (week_number를 16으로 고정)
             String insertSql =
                     "INSERT INTO attendance_records " +
                             "(student_id, subject_id, attendance_datetime, status, bssid, android_id, week_number) " +
-                            "VALUES (?, ?, (SYSTIMESTAMP AT TIME ZONE 'Asia/Seoul'), '출석', ?, ?, ?)";
+                            "VALUES (?, ?, (SYSTIMESTAMP AT TIME ZONE 'Asia/Seoul'), '출석', ?, ?, 16)";
 
             try (PreparedStatement ps2 = conn.prepareStatement(insertSql)) {
                 ps2.setString(1, studentId);
                 ps2.setString(2, actualSubjectId);
                 ps2.setString(3, bssid);
                 ps2.setString(4, androidId);
-                ps2.setInt(5, weekNumber);
                 ps2.executeUpdate();
             }
 
             jsonResponse.addProperty("result", "success");
             jsonResponse.addProperty("subject_name", subjectName);
-            jsonResponse.addProperty("week_number", weekNumber);
+            jsonResponse.addProperty("week_number", 16); // 클라이언트에 표시할 용도
 
         } catch (Exception e) {
             jsonResponse.addProperty("result", "error");

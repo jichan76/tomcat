@@ -39,14 +39,17 @@ public class AttendanceStatusListServlet extends HttpServlet {
                         "WHERE e.subject_id = ? AND u.role = 'student'";
 
         String sqlStatus =
-                "SELECT u.user_id AS student_id, u.name, NVL(ar.status, '결석') AS status " +
-                        "FROM enrollments e " +
-                        "JOIN users u ON u.user_id = e.student_id " +
-                        "LEFT JOIN attendance_records ar " +
-                        "  ON ar.student_id = e.student_id " +
-                        " AND ar.subject_id = e.subject_id " +
-                        " AND TRUNC(ar.attendance_datetime) = TRUNC(SYSDATE) " +
-                        "WHERE e.subject_id = ? AND u.role = 'student'";
+                "SELECT student_id, name, NVL(status, '결석') AS status FROM (" +
+                        "  SELECT u.user_id AS student_id, u.name, ar.status, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY u.user_id ORDER BY ar.attendance_datetime DESC) AS rn " +
+                        "  FROM enrollments e " +
+                        "  JOIN users u ON u.user_id = e.student_id " +
+                        "  LEFT JOIN attendance_records ar " +
+                        "    ON ar.student_id = e.student_id " +
+                        "   AND ar.subject_id = e.subject_id " +
+                        "   AND TRUNC(ar.attendance_datetime) = TRUNC(SYSDATE) " +
+                        "  WHERE e.subject_id = ? AND u.role = 'student'" +
+                        ") WHERE rn = 1";
 
         try (Connection conn = getConnection();
              PreparedStatement pstmtAll = conn.prepareStatement(sqlAll);

@@ -35,33 +35,33 @@ public class AttendanceStatusServlet extends HttpServlet {
         String studentId = request.getParameter("studentId");
         String subjectId = request.getParameter("subjectId");
         // 주차별 출결상태 쿼리
+// 주차별 출석 상태 쿼리
         String weekQuery =
                 "SELECT week_number, status " +
                         "FROM ( " +
                         "  SELECT " +
-                        "    FLOOR((CAST(attendance_datetime AS DATE) - si.start_date)/7)+1 AS week_number, " +
-                        "    ar.status, " +
-                        "    ROW_NUMBER() OVER (PARTITION BY FLOOR((CAST(attendance_datetime AS DATE) - si.start_date)/7)+1 " +
-                        "      ORDER BY ar.attendance_datetime DESC) AS rn " +
-                        "  FROM attendance_records ar, semester_info si " +
-                        "  WHERE ar.student_id = ? AND ar.subject_id = ? " +
+                        "    week_number, " +
+                        "    status, " +
+                        "    ROW_NUMBER() OVER (PARTITION BY week_number ORDER BY attendance_datetime DESC) AS rn " +
+                        "  FROM attendance_records " +
+                        "  WHERE student_id = ? AND subject_id = ? " +
                         ") " +
-                        "WHERE rn = 1 AND week_number BETWEEN 1 AND 16";
+                        "WHERE rn = 1 AND week_number BETWEEN 1 AND 20";
 
-        // 요약 쿼리
+// 요약 쿼리 (출석/결석/지각_조퇴 개수)
         String sumQuery =
                 "SELECT status, COUNT(*) cnt " +
                         "FROM ( " +
                         "  SELECT " +
-                        "    FLOOR((CAST(attendance_datetime AS DATE) - si.start_date)/7)+1 AS week_number, " +
-                        "    ar.status, " +
-                        "    ROW_NUMBER() OVER (PARTITION BY FLOOR((CAST(attendance_datetime AS DATE) - si.start_date)/7)+1 " +
-                        "      ORDER BY ar.attendance_datetime DESC) AS rn " +
-                        "  FROM attendance_records ar, semester_info si " +
-                        "  WHERE ar.student_id = ? AND ar.subject_id = ? " +
+                        "    week_number, " +
+                        "    status, " +
+                        "    ROW_NUMBER() OVER (PARTITION BY week_number ORDER BY attendance_datetime DESC) AS rn " +
+                        "  FROM attendance_records " +
+                        "  WHERE student_id = ? AND subject_id = ? " +
                         ") " +
-                        "WHERE rn = 1 AND week_number BETWEEN 1 AND 16 " +
+                        "WHERE rn = 1 AND week_number BETWEEN 1 AND 20 " +
                         "GROUP BY status";
+
 
         Connection conn = null;
         PreparedStatement pstmt = null;
