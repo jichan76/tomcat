@@ -17,7 +17,7 @@ CREATE TABLE subjects (                              -- 과목별 정보
     professor_id   VARCHAR2(20),                     -- 담당 교수 ID (users.user_id와 연결됨)
     professor_bssid VARCHAR2(50),                    -- BSSID 저장
     day_of_week VARCHAR2(10),                        -- 요일 ('MON', 'TUE', ...)
-    period NUMBER                                    -- 교시 (1, 2, 3...)
+    period NUMBER,                                   -- 교시 (1, 2, 3...)
     CONSTRAINT fk_professor FOREIGN KEY (professor_id) REFERENCES users(user_id)  -- 교수 FK
 );
 CREATE TABLE enrollments (                       -- 과목별 수강중인 학생목록
@@ -63,4 +63,25 @@ CREATE TABLE attendance_open_log (              --출석 오픈 이벤트
 );
 CREATE TABLE semester_info (
     start_date    DATE NOT NULL  -- 학기 시작일(예: 2025-03-04)
+);
+-- 1) 마감 테이블 (주차 단위로 1건)
+CREATE TABLE ADMIN.ATTENDANCE_CLOSURES (
+  SUBJECT_ID   NUMBER      NOT NULL,
+  WEEK_NUMBER  NUMBER      NOT NULL,
+  CLOSED_AT    TIMESTAMP   NOT NULL,
+  CLOSED_BY    VARCHAR2(50),
+  CONSTRAINT PK_ATTENDANCE_CLOSURES PRIMARY KEY (SUBJECT_ID, WEEK_NUMBER)
+);
+CREATE TABLE HOLIDAY (
+  HDATE DATE PRIMARY KEY,          -- 휴일 날짜 (예: 2025-10-03)
+  HNAME VARCHAR2(120) NOT NULL,    -- 휴일명 (설날, 대체공휴일 등)
+  SCOPE VARCHAR2(10) DEFAULT 'ALL' -- 'ALL' | 'COURSE' (특정 과목 한정 시)
+);
+
+CREATE TABLE attendance_open_log (
+  open_id        NUMBER PRIMARY KEY,
+  subject_id     NUMBER NOT NULL,
+  bssid          VARCHAR2(32) NOT NULL,
+  open_datetime  TIMESTAMP    NOT NULL,
+  close_datetime TIMESTAMP    NULL
 );

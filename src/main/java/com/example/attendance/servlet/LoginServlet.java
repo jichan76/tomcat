@@ -1,133 +1,234 @@
 package com.example.attendance.servlet;
 
-import java.io.*;
-import java.sql.*;
+import com.google.gson.JsonObject;
+import org.mindrot.jbcrypt.BCrypt;
+
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.*;
-import org.mindrot.jbcrypt.BCrypt;
-
-import com.google.gson.JsonObject;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.sql.*;
+import java.util.Properties;                 // [ADDED]
+import java.util.concurrent.Semaphore;       // [ADDED]
+import java.util.concurrent.TimeUnit;        // [ADDED]
+import java.util.regex.Matcher;              // [ADDED]
+import java.util.regex.Pattern;              // [ADDED]
 
 @WebServlet("/LoginServlet")
 public class LoginServlet extends HttpServlet {
 
-    private Connection getConnection() throws Exception {
+    // ----- 튜닝 파라미터 -----
+    private static final int MAX_CONCURRENT_ALL    = 24;  // [ADDED]
+    private static final int MAX_CONCURRENT_BCRYPT = 4;   // [ADDED]
+    private static final int ACQUIRE_TIMEOUT_MS    = 300; // [ADDED]
+    private static final int SQL_TIMEOUT_SEC       = 8;   // [ADDED]
+    private static final int DB_CONNECT_TO_MS      = 8000;// [ADDED]
+    private static final int TARGET_BCRYPT_COST    = 10;  // [ADDED] 재해시 목표 cost
+
+    private static final Semaphore GUARD_ALL    = new Semaphore(MAX_CONCURRENT_ALL, true);   // [ADDED]
+    private static final Semaphore GUARD_BCRYPT = new Semaphore(MAX_CONCURRENT_BCRYPT, true);// [ADDED]
+    private static final Pattern COST_PAT = Pattern.compile("\\$2[aby]\\$(\\d{2})\\$");       // [ADDED]
+
+    static { // [ADDED]
+        try {
+            Class.forName("oracle.jdbc.driver.OracleDriver");
+            DriverManager.setLoginTimeout(DB_CONNECT_TO_MS/1000);
+        } catch (ClassNotFoundException e) { throw new ExceptionInInitializerError(e); }
+    }
+
+    private Connection getConnection() throws SQLException { // [CHANGED]
         String url = "jdbc:oracle:thin:@appdb_high?TNS_ADMIN=/opt/wallet";
-        String user = "ADMIN";
-        String password = "NewPassword123!";
-        Class.forName("oracle.jdbc.driver.OracleDriver");
-        return DriverManager.getConnection(url, user, password);
+        Properties p = new Properties();
+        p.setProperty("user", "ADMIN");
+        p.setProperty("password", "NewPassword123!");
+        p.setProperty("oracle.net.CONNECT_TIMEOUT", String.valueOf(DB_CONNECT_TO_MS));
+        p.setProperty("oracle.net.READ_TIMEOUT",    String.valueOf(DB_CONNECT_TO_MS));
+        p.setProperty("oracle.jdbc.ReadTimeout",    String.valueOf(DB_CONNECT_TO_MS));
+        return DriverManager.getConnection(url, p);
     }
 
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
 
-        request.setCharacterEncoding("UTF-8");
-        response.setContentType("application/json; charset=UTF-8");
-        PrintWriter out = response.getWriter();
-        JsonObject jsonResponse = new JsonObject();
+        boolean acquired = false; // [ADDED]
+        try { // [ADDED]
+            acquired = GUARD_ALL.tryAcquire(ACQUIRE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            if (!acquired) { response.setStatus(503); response.getWriter().write("{\"result\":\"busy\"}"); return; }
 
-        String userId = request.getParameter("id");
-        String password = request.getParameter("password");
-        String androidId = request.getParameter("android_id");
+            request.setCharacterEncoding("UTF-8");
+            response.setContentType("application/json; charset=UTF-8");
+            response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+            response.setHeader("Pragma", "no-cache");
 
-        if (userId == null || password == null) {
-            jsonResponse.addProperty("result", "error");
-            jsonResponse.addProperty("message", "Missing id or password");
-            out.print(jsonResponse.toString());
-            return;
-        }
-        try (Connection conn = getConnection()) {
-            String sql = "SELECT password, android_id, name, role, is_first_login, is_initial_admin FROM users WHERE user_id = ?";
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setString(1, userId);
-                ResultSet rs = pstmt.executeQuery();
-                if (rs.next()) {
-                    String dbPassword = rs.getString("password");
-                    String dbAndroidId = rs.getString("android_id");
-                    String name = rs.getString("name");
-                    String role = rs.getString("role");
-                    int isFirstLogin = rs.getInt("is_first_login");
-                    int isInitialAdmin = rs.getInt("is_initial_admin");
+            JsonObject json = new JsonObject();
+            try (PrintWriter out = response.getWriter()) {
 
-                    boolean passwordMatched = false;
+                String userId = trimOrNull(request.getParameter("id"));
+                String password = request.getParameter("password");
+                String androidId = trimOrNull(request.getParameter("android_id"));
 
-                    // BCrypt로 비밀번호를 검증하는 것이 기본 로직
-                    if (dbPassword != null && dbPassword.startsWith("$2a$")) { // BCrypt 해시 문자열은 '$2a$' 또는 '$2b$' 등으로 시작
-                        passwordMatched = BCrypt.checkpw(password, dbPassword);
-                    }
-                    // 해싱되지 않은 (평문) 비밀번호인 경우 (초기 관리자 등 특정 상황에만 해당)
-                    else {
-                        // 특정 조건 (예: 'admin' 역할이면서 'is_initial_admin'이 1인 경우)에만 평문 비밀번호 비교 허용
-                        if ("admin".equals(role) && isInitialAdmin == 1) {
-                            passwordMatched = password.equals(dbPassword);
-                            // TODO: 보안 강화: 초기 관리자 로그인 후에는 반드시 비밀번호를 BCrypt로 해싱하여 업데이트하는 로직 추가 필요
-                            // 예시: 로그인 성공 후, isInitialAdmin이 1인 경우 비밀번호를 해싱하여 DB에 업데이트
-                            // String hashedPassword = BCrypt.hashpw(password, BCrypt.gensalt());
-                            // ... update users SET password = ? WHERE user_id = ? ...
-                        } else {
-                            // 학생/교수/일반관리자의 평문 비밀번호는 허용하지 않음 (보안 정책)
-                            // 이 경우 passwordMatched는 false로 유지되어 로그인 실패 처리됨
-                        }
-                    }
-
-                    if (passwordMatched) {
-                        // 사용자의 역할에 따라 Android ID 검증 로직 분기
-                        if ("student".equals(role)) {
-                            // 학생인 경우:
-                            // 1. dbAndroidId가 없으면 새로 등록
-                            if (dbAndroidId == null || dbAndroidId.isEmpty()) {
-                                String updateSql = "UPDATE users SET android_id = ? WHERE user_id = ?";
-                                try (PreparedStatement updatePstmt = conn.prepareStatement(updateSql)) {
-                                    updatePstmt.setString(1, androidId);
-                                    updatePstmt.setString(2, userId);
-                                    updatePstmt.executeUpdate();
-                                }
-                            }
-                            // 2. dbAndroidId가 있는데, 앱에서 보낸 androidId와 다르면 로그인 실패
-                            else if (!dbAndroidId.equals(androidId)) { // dbAndroidId가 null/empty가 아닐 때만 이 조건에 들어옴
-                                jsonResponse.addProperty("result", "fail");
-                                jsonResponse.addProperty("message", "등록된 기기와 다릅니다");
-                                out.print(jsonResponse.toString());
-                                return;
-                            }// 학생구간
-                        } else { // 학생이 아닌 경우 (교수, 관리자)
-                            // 교수나 관리자는 android_id가 필수 조건이 아닐 수 있음.
-                            // 여기서는 dbAndroidId가 NULL일 가능성을 고려하여 안전하게 처리.
-                            // 만약 기존에 android_id가 등록되어 있고, 앱에서 보낸 값과 다르면 실패 처리
-                            if (dbAndroidId != null && androidId != null && !dbAndroidId.equals(androidId)) {
-                                jsonResponse.addProperty("result", "fail");
-                                jsonResponse.addProperty("message", "등록된 기기와 다릅니다");
-                                out.print(jsonResponse.toString());
-                                return;
-                            }
-                            // 참고: 만약 교수/관리자도 최초 로그인 시 Android ID를 등록해야 하는 로직이 필요하다면,
-                            // 여기에 'dbAndroidId == null'인 경우 업데이트하는 로직을 추가할 수 있습니다.
-                            // 예: if (dbAndroidId == null && androidId != null) { ... update users SET android_id ... }
-                        }
-                        // Android ID 검증을 통과했거나, 학생이 아닌 경우
-                        jsonResponse.addProperty("result", "success");
-                        jsonResponse.addProperty("role", role);
-                        jsonResponse.addProperty("name", name);
-                        jsonResponse.addProperty("user_id", userId);
-                        jsonResponse.addProperty("is_first_login", isFirstLogin);
-                        jsonResponse.addProperty("is_initial_admin", isInitialAdmin);
-                    } else {
-                        jsonResponse.addProperty("result", "fail");
-                        jsonResponse.addProperty("message", "비밀번호 틀림");
-                    }
-                } else {
-                    jsonResponse.addProperty("result", "fail");
-                    jsonResponse.addProperty("message", "사용자 없음");
+                if (userId == null || password == null || password.isEmpty()) {
+                    response.setStatus(400);
+                    json.addProperty("result", "error");
+                    json.addProperty("message", "Missing id or password");
+                    out.print(json.toString());
+                    return;
                 }
+
+                try (Connection conn = getConnection();
+                     PreparedStatement ps = conn.prepareStatement(
+                             "SELECT user_id, password, android_id, name, role, is_first_login, is_initial_admin, department " +
+                                     "FROM users WHERE TRIM(user_id) = TRIM(?)")) {
+
+                    ps.setQueryTimeout(SQL_TIMEOUT_SEC); // [ADDED]
+                    ps.setString(1, userId);
+                    String selectedUserId, dbPassword, dbAndroidId, name, roleRaw, department;
+                    String role = "";
+                    int isFirstLogin, isInitialAdmin;
+
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next()) {
+                            json.addProperty("result", "fail");
+                            json.addProperty("message", "사용자 없음");
+                            out.print(json.toString());
+                            return;
+                        }
+                        selectedUserId  = rs.getString("user_id");     // ★ 추가
+                        dbPassword     = rs.getString("password");
+                        dbAndroidId    = rs.getString("android_id");
+                        name           = rs.getString("name");
+                        roleRaw        = rs.getString("role");
+                        role           = roleRaw == null ? "" : roleRaw.toLowerCase();
+                        isFirstLogin   = rs.getInt("is_first_login");
+                        isInitialAdmin = rs.getInt("is_initial_admin");
+                        department      = rs.getString("department");  // ★ 추가
+                    }
+
+                    // 1) 비밀번호 검증 (BCrypt 병렬폭주 방지)
+                    boolean passwordMatched;
+                    if (dbPassword != null &&
+                            (dbPassword.startsWith("$2a$") || dbPassword.startsWith("$2b$") || dbPassword.startsWith("$2y$"))) {
+
+                        boolean got = GUARD_BCRYPT.tryAcquire(ACQUIRE_TIMEOUT_MS, TimeUnit.MILLISECONDS); // [ADDED]
+                        if (!got) { response.setStatus(503); out.print("{\"result\":\"busy\"}"); return; } // [ADDED]
+                        try {
+                            passwordMatched = BCrypt.checkpw(password, dbPassword);
+                        } finally {
+                            GUARD_BCRYPT.release(); // [ADDED]
+                        }
+
+                        // 성공했고 work factor가 높으면 즉시 재해시(다음 로그인부터 빠름)  // [ADDED]
+                        if (passwordMatched) {
+                            int cost = extractCost(dbPassword);
+                            if (cost > TARGET_BCRYPT_COST) {
+                                String rehash = BCrypt.hashpw(password, BCrypt.gensalt(TARGET_BCRYPT_COST));
+                                try (PreparedStatement ups = conn.prepareStatement(
+                                        "UPDATE users SET password = ?, is_initial_admin = 0 WHERE user_id = ?")) {
+                                    ups.setQueryTimeout(SQL_TIMEOUT_SEC); // [ADDED]
+                                    ups.setString(1, rehash);
+                                    ups.setString(2, userId);
+                                    ups.executeUpdate();
+                                } catch (Exception ignore) {}
+                            }
+                        }
+                    } else {
+                        // 평문 허용: 초기 관리자만
+                        passwordMatched = "admin".equals(role) && isInitialAdmin == 1 && password.equals(dbPassword);
+                        if (passwordMatched) {
+                            String hashed = BCrypt.hashpw(password, BCrypt.gensalt(TARGET_BCRYPT_COST)); // [CHANGED] cost 10
+                            try (PreparedStatement ups = conn.prepareStatement(
+                                    "UPDATE users SET password = ?, is_initial_admin = 0 WHERE user_id = ?")) {
+                                ups.setQueryTimeout(SQL_TIMEOUT_SEC); // [ADDED]
+                                ups.setString(1, hashed);
+                                ups.setString(2, userId);
+                                ups.executeUpdate();
+                                isInitialAdmin = 0;
+                            }
+                        }
+                    }
+
+                    if (!passwordMatched) {
+                        json.addProperty("result", "fail");
+                        json.addProperty("message", "비밀번호 틀림");
+                        out.print(json.toString());
+                        return;
+                    }
+
+                    // 2) Android ID 정책 (쿼리들에 타임아웃 부여)
+                    if ("student".equals(role)) {
+                        if (androidId == null || androidId.isEmpty()) {
+                            response.setStatus(400);
+                            json.addProperty("result", "fail");
+                            json.addProperty("message", "학생은 안드로이드 기기 등록이 필요합니다");
+                            out.print(json.toString());
+                            return;
+                        }
+                        if (dbAndroidId == null || dbAndroidId.isEmpty()) {
+                            try (PreparedStatement ups = conn.prepareStatement(
+                                    "UPDATE users SET android_id = ? WHERE user_id = ?")) {
+                                ups.setQueryTimeout(SQL_TIMEOUT_SEC); // [ADDED]
+                                ups.setString(1, androidId);
+                                ups.setString(2, userId);
+                                ups.executeUpdate();
+                            }
+                        } else if (!dbAndroidId.equals(androidId)) {
+                            json.addProperty("result", "fail");
+                            json.addProperty("message", "등록된 기기와 다릅니다");
+                            out.print(json.toString());
+                            return;
+                        }
+                    } else {
+                        if (dbAndroidId != null && !dbAndroidId.isEmpty()
+                                && androidId != null && !androidId.isEmpty()
+                                && !dbAndroidId.equals(androidId)) {
+                            json.addProperty("result", "fail");
+                            json.addProperty("message", "등록된 기기와 다릅니다");
+                            out.print(json.toString());
+                            return;
+                        }
+                    }
+
+                    // 3) 성공 응답
+                    json.addProperty("result", "success");
+                    json.addProperty("role", role);
+                    json.addProperty("name", name);
+                    json.addProperty("user_id", selectedUserId);
+                    json.addProperty("department", department == null ? "" : department); // ★ 학과
+                    json.addProperty("is_first_login", isFirstLogin);
+                    json.addProperty("is_initial_admin", isInitialAdmin);
+                    HttpSession session = request.getSession(true);   // ★ JSESSIONID 발급
+                    session.setAttribute("USER_ID", selectedUserId);  // ★ ChangePasswordServlet과 동일 키
+                    session.setMaxInactiveInterval(30 * 60);          // (선택) 30분
+                    out.print(json.toString());
+                }
+            } catch (Exception e) {
+                response.setStatus(500);
+                try (PrintWriter out = response.getWriter()) {
+                    JsonObject err = new JsonObject();
+                    err.addProperty("result", "error");
+                    err.addProperty("message", safe(e.getMessage()));
+                    out.print(err.toString());
+                }
+                e.printStackTrace();
             }
-        } catch (Exception e) {
-            jsonResponse.addProperty("result", "error");
-            jsonResponse.addProperty("message", e.getMessage());
-            e.printStackTrace(); // <-- 서버 로그(catalina.out)에 스택 트레이스를 출력하여 정확한 오류 확인
+        } catch (InterruptedException ie) { // [ADDED]
+            Thread.currentThread().interrupt(); response.setStatus(503);
+        } finally { // [ADDED]
+            if (acquired) GUARD_ALL.release();
         }
-        out.print(jsonResponse.toString());
     }
+
+    private static String trimOrNull(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.isEmpty() ? null : t;
+    }
+    private static int extractCost(String hash) { // [ADDED]
+        try { Matcher m = COST_PAT.matcher(hash); if (m.find()) return Integer.parseInt(m.group(1)); }
+        catch (Exception ignore) {}
+        return TARGET_BCRYPT_COST;
+    }
+    private static String safe(String s) { return s == null ? "" : s.replace("\"","\\\""); } // [ADDED]
 }

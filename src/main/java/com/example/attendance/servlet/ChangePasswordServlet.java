@@ -1,101 +1,180 @@
 package com.example.attendance.servlet;
 
-import java.io.*;
-import java.sql.*;
+import com.google.gson.JsonObject;
+import org.mindrot.jbcrypt.BCrypt;
+
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.*;
-
-import com.google.gson.JsonObject;
-import org.mindrot.jbcrypt.BCrypt;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.sql.*;
+import java.util.Properties;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 @WebServlet("/ChangePasswordServlet")
 public class ChangePasswordServlet extends HttpServlet {
 
+    private static final Semaphore GUARD = new Semaphore(8, true);
+    private static final int ACQUIRE_TIMEOUT_MS = 300;
+    private static final int SQL_TIMEOUT_SEC = 8;
+    private static final int DB_CONNECT_TIMEOUT_MS = 8000;
+    private static final int DB_READ_TIMEOUT_MS = 8000;
+    private static final int BCRYPT_COST = 10;
+
     private Connection getConnection() throws Exception {
         String url = "jdbc:oracle:thin:@appdb_high?TNS_ADMIN=/opt/wallet";
-        String user = "ADMIN";
-        String password = "NewPassword123!";
+        Properties p = new Properties();
+        p.setProperty("user", "ADMIN");
+        p.setProperty("password", "NewPassword123!");
+        p.setProperty("oracle.net.CONNECT_TIMEOUT", String.valueOf(DB_CONNECT_TIMEOUT_MS));
+        p.setProperty("oracle.net.READ_TIMEOUT", String.valueOf(DB_READ_TIMEOUT_MS));
+        p.setProperty("oracle.jdbc.ReadTimeout", String.valueOf(DB_READ_TIMEOUT_MS));
         Class.forName("oracle.jdbc.driver.OracleDriver");
-        return DriverManager.getConnection(url, user, password);
+        return DriverManager.getConnection(url, p);
     }
 
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
 
-        request.setCharacterEncoding("UTF-8");
-        response.setContentType("application/json; charset=UTF-8");
-        PrintWriter out = response.getWriter();
-        JsonObject jsonResponse = new JsonObject();
+        boolean ok = false;
+        try {
+            ok = GUARD.tryAcquire(ACQUIRE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            if (!ok) { response.setStatus(503); response.getWriter().write("{\"result\":\"busy\"}"); return; }
 
-        String userId = request.getParameter("id");           // id 파라미터명 맞춰서 받기
-        String newPassword = request.getParameter("newPassword");
+            request.setCharacterEncoding("UTF-8");
+            response.setContentType("application/json; charset=UTF-8");
+            response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+            response.setHeader("Pragma", "no-cache");
 
-        if (userId == null || newPassword == null || userId.isEmpty() || newPassword.isEmpty()) {
-            jsonResponse.addProperty("result", "error");
-            jsonResponse.addProperty("message", "아이디 또는 새 비밀번호가 없습니다.");
-            out.print(jsonResponse.toString());
-            return;
-        }
+            try (PrintWriter out = response.getWriter()) {
 
-        try (Connection conn = getConnection()) {
-            // [1] 서버측에서도 비번 규칙 체크
-            if (!newPassword.matches("^[a-zA-Z0-9!@#$%^*]{8,20}$")) {
-                jsonResponse.addProperty("result", "error");
-                jsonResponse.addProperty("message", "비밀번호 규칙을 지켜주세요.");
-                out.print(jsonResponse.toString());
-                return;
-            }
-            // ★ [2] 기존 비밀번호 조회 (DB에 저장된 해시값)
-            String getPwSql = "SELECT password FROM users WHERE user_id = ?";
-            String currentHashedPw = null;
-            try (PreparedStatement pwStmt = conn.prepareStatement(getPwSql)) {
-                pwStmt.setString(1, userId);
-                try (ResultSet rs = pwStmt.executeQuery()) {
-                    if (rs.next()) {
-                        currentHashedPw = rs.getString(1);
+                final String mode        = trimOrNull(request.getParameter("mode"));   // ★ "session" 이면 세션 기반
+                final String newPassword = request.getParameter("newPassword");
+
+                if (newPassword == null || newPassword.isEmpty()) {
+                    response.setStatus(400);
+                    out.print(error("새 비밀번호가 없습니다."));
+                    return;
+                }
+                if (!newPassword.matches("^[a-zA-Z0-9!@#$%^*]{8,20}$") || !hasAtLeastTwoKinds(newPassword)) {
+                    response.setStatus(400);
+                    out.print(error("비밀번호 규칙을 지켜주세요. (8~20자, 영문/숫자/특수 포함, 최소 2종 조합)"));
+                    return;
+                }
+
+                // ★ 사용자 식별 분기
+                String userId;
+                String email = null;
+
+                if ("session".equalsIgnoreCase(mode)) {
+                    HttpSession s = request.getSession(false);
+                    if (s == null || s.getAttribute("USER_ID") == null) {
+                        response.setStatus(401);
+                        out.print(error("세션이 만료되었습니다. 다시 로그인하세요."));
+                        return;
+                    }
+                    userId = String.valueOf(s.getAttribute("USER_ID"));
+                } else {
+                    // 기존: 비밀번호 찾기(RESET) 흐름 – id+email 필요
+                    userId = trimOrNull(request.getParameter("id"));
+                    email  = trimOrNull(request.getParameter("email"));
+                    if (userId == null || email == null) {
+                        response.setStatus(400);
+                        out.print(error("아이디/이메일이 없습니다."));
+                        return;
                     }
                 }
-            }
-            if (currentHashedPw == null) {
-                jsonResponse.addProperty("result", "fail");
-                jsonResponse.addProperty("message", "사용자를 찾을 수 없습니다.");
-                out.print(jsonResponse.toString());
-                return;
-            }
-            // ★ [3] 기존 비밀번호와 같은지 체크 (newPassword를 해싱 없이 그대로 checkpw로 비교)
-            if (BCrypt.checkpw(newPassword, currentHashedPw)) {
-                jsonResponse.addProperty("result", "fail");
-                jsonResponse.addProperty("message", "기존에 사용하던 비밀번호로는 변경할 수 없습니다.");
-                out.print(jsonResponse.toString());
-                return;
-            }
-            // 비밀번호 해싱
-            String hashedPassword = BCrypt.hashpw(newPassword, BCrypt.gensalt());
 
-            // [4] 비밀번호+첫로그인 갱신
-            String sql = "UPDATE users SET password = ?, is_first_login = 0 WHERE user_id = ?";
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setString(1, hashedPassword);
-                pstmt.setString(2, userId);
+                // === DB 처리 ===
+                try (Connection conn = getConnection()) {
+                    conn.setAutoCommit(false);
 
-                int affectedRows = pstmt.executeUpdate();
-                if (affectedRows > 0) {
-                    jsonResponse.addProperty("result", "success");
-                    jsonResponse.addProperty("message", "비밀번호가 성공적으로 변경되었습니다.");
-                    jsonResponse.addProperty("is_first_login", 0); // 선택
-                } else {
-                    jsonResponse.addProperty("result", "fail");
-                    jsonResponse.addProperty("message", "사용자를 찾을 수 없습니다.");
+                    // 현재 비밀번호 조회 (분기)
+                    String q = ("session".equalsIgnoreCase(mode))
+                            ? "SELECT PASSWORD FROM USERS WHERE TRIM(USER_ID)=?"
+                            : "SELECT PASSWORD FROM USERS WHERE TRIM(USER_ID)=? AND LOWER(EMAIL)=LOWER(?)";
+
+                    String currentPw = null;
+                    int matchCnt = 0;
+                    try (PreparedStatement ps = conn.prepareStatement(q)) {
+                        ps.setQueryTimeout(SQL_TIMEOUT_SEC);
+                        ps.setString(1, userId);
+                        if (!"session".equalsIgnoreCase(mode)) ps.setString(2, email);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            while (rs.next()) { currentPw = rs.getString(1); matchCnt++; }
+                        }
+                    }
+                    if (matchCnt != 1) {
+                        conn.rollback();
+                        out.print(fail(matchCnt == 0 ? "사용자를 찾을 수 없습니다." : "중복된 사용자 데이터가 있습니다."));
+                        return;
+                    }
+
+                    // 기존 비번 동일 방지
+                    boolean isHashed   = currentPw != null && (currentPw.startsWith("$2a$") || currentPw.startsWith("$2b$") || currentPw.startsWith("$2y$"));
+                    boolean sameAsOld  = isHashed ? BCrypt.checkpw(newPassword, currentPw) : newPassword.equals(currentPw);
+                    if (sameAsOld) {
+                        conn.rollback();
+                        out.print(fail("기존 비밀번호와 동일합니다."));
+                        return;
+                    }
+
+                    final String hashed = BCrypt.hashpw(newPassword, BCrypt.gensalt(BCRYPT_COST));
+
+                    // 업데이트 (분기)
+                    String u = ("session".equalsIgnoreCase(mode))
+                            ? "UPDATE USERS SET PASSWORD=?, is_first_login=0 WHERE TRIM(USER_ID)=?"
+                            : "UPDATE USERS SET PASSWORD=?, is_first_login=0 WHERE TRIM(USER_ID)=? AND LOWER(EMAIL)=LOWER(?)";
+
+                    int updated;
+                    try (PreparedStatement ps = conn.prepareStatement(u)) {
+                        ps.setQueryTimeout(SQL_TIMEOUT_SEC);
+                        ps.setString(1, hashed);
+                        ps.setString(2, userId);
+                        if (!"session".equalsIgnoreCase(mode)) ps.setString(3, email);
+                        updated = ps.executeUpdate();
+                    }
+
+                    if (updated == 1) {
+                        conn.commit();
+                        JsonObject okResp = new JsonObject();
+                        okResp.addProperty("result", "success");
+                        okResp.addProperty("message", "비밀번호가 성공적으로 변경되었습니다.");
+                        okResp.addProperty("is_first_login", 0);
+                        out.print(okResp.toString());
+                    } else {
+                        conn.rollback();
+                        out.print(fail("사용자를 찾을 수 없습니다."));
+                    }
+                }
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                response.setStatus(500);
+                try (PrintWriter out = response.getWriter()) {
+                    out.print(error("서버 오류: " + safeMsg(e.getMessage())));
                 }
             }
-        } catch (Exception e) {
-            jsonResponse.addProperty("result", "error");
-            jsonResponse.addProperty("message", "서버 오류: " + e.getMessage());
-            e.printStackTrace();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt(); response.setStatus(503);
+        } finally {
+            if (ok) GUARD.release();
         }
-
-        out.print(jsonResponse.toString());
     }
+
+    // --- 유틸 ---
+    private static String trimOrNull(String s) { if (s == null) return null; String t = s.trim(); return t.isEmpty() ? null : t; }
+    private static boolean hasAtLeastTwoKinds(String s) {
+        boolean hasLetter = s.matches(".*[a-zA-Z].*");
+        boolean hasDigit  = s.matches(".*\\d.*");
+        boolean hasSpec   = s.matches(".*[!@#$%^*].*");
+        int kinds = (hasLetter?1:0) + (hasDigit?1:0) + (hasSpec?1:0);
+        return kinds >= 2;
+    }
+    private static String error(String msg) { JsonObject o = new JsonObject(); o.addProperty("result","error"); o.addProperty("message", msg); return o.toString(); }
+    private static String fail(String msg)  { JsonObject o = new JsonObject(); o.addProperty("result","fail");  o.addProperty("message", msg); return o.toString(); }
+    private static String safeMsg(String s) { if (s == null) return ""; return s.replace("\"","\\\""); }
 }

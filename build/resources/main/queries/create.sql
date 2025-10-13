@@ -17,7 +17,7 @@ CREATE TABLE subjects (                              -- 과목별 정보
     professor_id   VARCHAR2(20),                     -- 담당 교수 ID (users.user_id와 연결됨)
     professor_bssid VARCHAR2(50),                    -- BSSID 저장
     day_of_week VARCHAR2(10),                        -- 요일 ('MON', 'TUE', ...)
-    period NUMBER                                    -- 교시 (1, 2, 3...)
+    period NUMBER,                                   -- 교시 (1, 2, 3...)
     CONSTRAINT fk_professor FOREIGN KEY (professor_id) REFERENCES users(user_id)  -- 교수 FK
 );
 CREATE TABLE enrollments (                       -- 과목별 수강중인 학생목록
@@ -52,6 +52,36 @@ CREATE TABLE attendance_open_log (              --출석 오픈 이벤트
     room_id        VARCHAR2(30),                -- (선택) 추가로 관리할 교실/강의실 식별자
     CONSTRAINT fk_open_subject FOREIGN KEY (subject_id) REFERENCES subjects(subject_id)
 );
+CREATE TABLE attendance_open_log (              --출석 오픈 이벤트
+    open_id        NUMBER        PRIMARY KEY,  -- 출석 오픈 이벤트 고유 ID
+    subject_id     NUMBER        NOT NULL,     -- 출석을 여는 과목의 ID (subjects.subject_id)
+    open_datetime  TIMESTAMP     NOT NULL,     -- 출석이 시작된 시각 (교수님이 ‘시작’ 버튼 누른 시간)
+    close_datetime TIMESTAMP,                   -- 출석이 종료된 시각 (교수님이 ‘종료’ 버튼 누른 시간; NULL 허용)
+    bssid          VARCHAR2(50)  NOT NULL,     -- 출석 오픈 시 사용된 Wi-Fi AP의 BSSID
+    room_id        VARCHAR2(30),                -- (선택) 추가로 관리할 교실/강의실 식별자
+    CONSTRAINT fk_open_subject FOREIGN KEY (subject_id) REFERENCES subjects(subject_id)
+);
 CREATE TABLE semester_info (
     start_date    DATE NOT NULL  -- 학기 시작일(예: 2025-03-04)
+);
+-- 1) 마감 테이블 (주차 단위로 1건)
+CREATE TABLE ADMIN.ATTENDANCE_CLOSURES (
+  SUBJECT_ID   NUMBER      NOT NULL,
+  WEEK_NUMBER  NUMBER      NOT NULL,
+  CLOSED_AT    TIMESTAMP   NOT NULL,
+  CLOSED_BY    VARCHAR2(50),
+  CONSTRAINT PK_ATTENDANCE_CLOSURES PRIMARY KEY (SUBJECT_ID, WEEK_NUMBER)
+);
+CREATE TABLE HOLIDAY (
+  HDATE DATE PRIMARY KEY,          -- 휴일 날짜 (예: 2025-10-03)
+  HNAME VARCHAR2(120) NOT NULL,    -- 휴일명 (설날, 대체공휴일 등)
+  SCOPE VARCHAR2(10) DEFAULT 'ALL' -- 'ALL' | 'COURSE' (특정 과목 한정 시)
+);
+
+CREATE TABLE attendance_open_log (
+  open_id        NUMBER PRIMARY KEY,
+  subject_id     NUMBER NOT NULL,
+  bssid          VARCHAR2(32) NOT NULL,
+  open_datetime  TIMESTAMP    NOT NULL,
+  close_datetime TIMESTAMP    NULL
 );
