@@ -37,29 +37,11 @@ CREATE TABLE attendance_records (                      -- 출석리스트
     bssid               VARCHAR2(50),                  -- 당시 연결된 Wi-Fi BSSID
     android_id          VARCHAR2(100),                 -- 당시의 안드로이드 ID (위조 확인용)
     last_modified_at    TIMESTAMP,                      -- 출석 수정된 시간
-    week_number         NUMBER CONSTRAINT chk_week_range CHECK (week_number BETWEEN 1 AND 16), -- 주차표시
+    week_number         NUMBER CONSTRAINT chk_week_range CHECK (week_number BETWEEN 1 AND 20), -- 주차표시
     CONSTRAINT chk_status CHECK (status IN ('출석', '결석', '지각_조퇴')),  -- 상태 제한
     CONSTRAINT fk_attendance_student FOREIGN KEY (student_id) REFERENCES users(user_id),
     CONSTRAINT fk_attendance_subject FOREIGN KEY (subject_id) REFERENCES subjects(subject_id)
     CONSTRAINT fk_attendance_open FOREIGN KEY (open_id) REFERENCES attendance_open_log(open_id); -- 출석 기록이 어떤 출석 이벤트에 속하는지 연결하는 외래키
-);
-CREATE TABLE attendance_open_log (              --출석 오픈 이벤트
-    open_id        NUMBER        PRIMARY KEY,  -- 출석 오픈 이벤트 구분하는 고유 ID
-    subject_id     NUMBER        NOT NULL,     -- 출석을 여는 과목의 ID (subjects.subject_id)
-    open_datetime  TIMESTAMP     NOT NULL,     -- 출석이 시작된 시각 (교수님이 ‘시작’ 버튼 누른 시간)
-    close_datetime TIMESTAMP,                   -- 출석이 종료된 시각 (교수님이 ‘종료’ 버튼 누른 시간; NULL 허용)
-    bssid          VARCHAR2(50)  NOT NULL,     -- 출석 오픈 시 사용된 Wi-Fi AP의 BSSID
-    room_id        VARCHAR2(30),                -- (선택) 추가로 관리할 교실/강의실 식별자
-    CONSTRAINT fk_open_subject FOREIGN KEY (subject_id) REFERENCES subjects(subject_id)
-);
-CREATE TABLE attendance_open_log (              --출석 오픈 이벤트
-    open_id        NUMBER        PRIMARY KEY,  -- 출석 오픈 이벤트 고유 ID
-    subject_id     NUMBER        NOT NULL,     -- 출석을 여는 과목의 ID (subjects.subject_id)
-    open_datetime  TIMESTAMP     NOT NULL,     -- 출석이 시작된 시각 (교수님이 ‘시작’ 버튼 누른 시간)
-    close_datetime TIMESTAMP,                   -- 출석이 종료된 시각 (교수님이 ‘종료’ 버튼 누른 시간; NULL 허용)
-    bssid          VARCHAR2(50)  NOT NULL,     -- 출석 오픈 시 사용된 Wi-Fi AP의 BSSID
-    room_id        VARCHAR2(30),                -- (선택) 추가로 관리할 교실/강의실 식별자
-    CONSTRAINT fk_open_subject FOREIGN KEY (subject_id) REFERENCES subjects(subject_id)
 );
 CREATE TABLE semester_info (
     start_date    DATE NOT NULL  -- 학기 시작일(예: 2025-03-04)

@@ -11,9 +11,11 @@ import java.sql.*;
 import java.util.Properties;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Logger;
 
 @WebServlet("/FinalizeAttendance")
 public class FinalizeAttendanceServlet extends HttpServlet {
+    private static final Logger logger = Logger.getLogger(FinalizeAttendanceServlet.class.getName());
 
     // ===== Concurrency & Timeouts =====
     private static final Semaphore GUARD = new Semaphore(2, true);
@@ -114,7 +116,10 @@ public class FinalizeAttendanceServlet extends HttpServlet {
             String weekStr      = req.getParameter("week");
             String overrideDate = req.getParameter("overrideDate"); // yyyy-MM-dd or null
             String bssid        = req.getParameter("bssid");        // 교수 세션 BSSID (nullable 허용)
-
+            logger.info(() -> String.format(
+                    "[FinalizeAttendance] 요청 수신 → subjectId=%s, week=%s, overrideDate=%s, bssid=%s",
+                    subjectIdStr, weekStr, overrideDate, bssid
+            ));
             if (subjectIdStr == null || subjectIdStr.trim().isEmpty() ||
                     weekStr == null || weekStr.trim().isEmpty()) {
                 resp.setStatus(400);

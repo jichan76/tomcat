@@ -15,6 +15,7 @@ dependencies {
     implementation("com.google.code.gson:gson:2.8.9")
     implementation("org.mindrot:jbcrypt:0.4")
     implementation("com.sun.mail:javax.mail:1.6.2")
+    implementation("org.json:json:20230227")
 }
 
 tasks.withType<JavaCompile>().configureEach {

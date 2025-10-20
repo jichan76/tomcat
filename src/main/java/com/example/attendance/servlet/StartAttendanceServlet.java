@@ -31,19 +31,8 @@ public class StartAttendanceServlet extends HttpServlet {
         p.setProperty("password", "NewPassword123!");
         p.setProperty("oracle.net.CONNECT_TIMEOUT", String.valueOf(DB_CONNECT_TIMEOUT_MS));
         p.setProperty("oracle.net.READ_TIMEOUT",    String.valueOf(DB_READ_TIMEOUT_MS));
-        p.setProperty("oracle.jdbc.ReadTimeout",    String.valueOf(DB_READ_TIMEOUT_MS));
         Class.forName("oracle.jdbc.driver.OracleDriver");
-        Connection conn = DriverManager.getConnection(url, p);
-
-        // 병렬 DML/QUERY 비활성 (권한 없어도 try-catch로 무시)
-        try (Statement st = conn.createStatement()) {
-            try { st.execute("ALTER SESSION DISABLE PARALLEL DML"); } catch (Exception ignore) {}
-            try { st.execute("ALTER SESSION DISABLE PARALLEL QUERY"); } catch (Exception ignore) {}
-            try { st.execute("ALTER SESSION SET parallel_degree_policy = MANUAL"); } catch (Exception ignore) {}
-            try { st.execute("ALTER SESSION SET parallel_min_time_threshold = AUTO"); } catch (Exception ignore) {}
-            try { st.execute("ALTER SESSION SET parallel_degree_limit = 1"); } catch (Exception ignore) {}
-        }
-        return conn;
+        return DriverManager.getConnection(url, p);
     }
 
     private void setJson(HttpServletResponse resp){
@@ -59,9 +48,6 @@ public class StartAttendanceServlet extends HttpServlet {
 
         setJson(resp);
         boolean ok = false;
-        boolean wrote = false;
-
-        // Writer를 한 번만 열어 모든 분기에서 동일 객체 사용
         PrintWriter out = resp.getWriter();
 
         try {
@@ -69,8 +55,6 @@ public class StartAttendanceServlet extends HttpServlet {
             if (!ok) {
                 resp.setStatus(503);
                 out.write("{\"result\":\"busy\"}");
-                out.flush(); resp.flushBuffer();
-                wrote = true;
                 return;
             }
 
@@ -78,165 +62,82 @@ public class StartAttendanceServlet extends HttpServlet {
 
             String subjectIdStr = req.getParameter("subjectId");
             String bssid        = req.getParameter("bssid");
-            String weekStr      = req.getParameter("week");          // ★ 추가 (필수)
-            String overrideDate = req.getParameter("overrideDate");  // ★ 추가 (선택, yyyy-MM-dd)
+            String weekStr      = req.getParameter("week");
 
-            JsonObject result = new JsonObject();
-
-            // 파라미터 검증
-            if (subjectIdStr == null || subjectIdStr.isEmpty()
-                    || bssid == null || bssid.isEmpty()
-                    || weekStr == null || weekStr.isEmpty()) {
+            if (subjectIdStr == null || weekStr == null) {
                 resp.setStatus(400);
-                result.addProperty("result", "error");
-                result.addProperty("message", "subjectId, bssid, week는 필수입니다.");
-                out.print(result.toString());
-                out.flush(); resp.flushBuffer();
-                wrote = true;
+                out.write("{\"result\":\"error\",\"message\":\"subjectId/week 누락\"}");
                 return;
             }
 
-            int subjectId;
-            int week;
-            try {
-                subjectId = Integer.parseInt(subjectIdStr);
-                week = Integer.parseInt(weekStr);
-            } catch (NumberFormatException nfe) {
-                resp.setStatus(400);
-                result.addProperty("result", "error");
-                result.addProperty("message", "subjectId/week 형식이 올바르지 않습니다.");
-                out.print(result.toString());
-                out.flush(); resp.flushBuffer();
-                wrote = true;
-                return;
-            }
-
-            // BSSID 소문자 통일
-            bssid = bssid.toLowerCase();
-
-            // session_date 결정: overrideDate가 있으면 사용, 없으면 오늘(서버 날짜)
-            java.sql.Date sessionDate;
-            if (overrideDate != null && !overrideDate.trim().isEmpty()) {
-                try {
-                    sessionDate = java.sql.Date.valueOf(overrideDate.trim()); // yyyy-MM-dd
-                } catch (IllegalArgumentException iae) {
-                    resp.setStatus(400);
-                    result.addProperty("result", "error");
-                    result.addProperty("message", "overrideDate 형식은 yyyy-MM-dd 여야 합니다.");
-                    out.print(result.toString());
-                    out.flush(); resp.flushBuffer();
-                    wrote = true;
-                    return;
-                }
-            } else {
-                sessionDate = new java.sql.Date(System.currentTimeMillis()); // 오늘(로컬 타임존 기준)
-            }
+            int subjectId = Integer.parseInt(subjectIdStr);
+            int week = Integer.parseInt(weekStr);
 
             try (Connection conn = getConnection()) {
                 conn.setAutoCommit(false);
 
-                // 0) 동일 과목의 기존 열린 세션 마감
-                final String CLOSE_OLD =
-                        "UPDATE /*+ NOPARALLEL */ attendance_open_log " +
-                                "   SET close_datetime = SYSTIMESTAMP " +
-                                " WHERE subject_id = ? AND close_datetime IS NULL";
-                try (PreparedStatement ps = conn.prepareStatement(CLOSE_OLD)) {
-                    ps.setQueryTimeout(SQL_TIMEOUT_SEC);
-                    ps.setInt(1, subjectId);
-                    ps.executeUpdate();
-                }
-
-                // 1) 새 세션 INSERT — week_number, session_date 확정 저장
-                final String INS =
-                        "INSERT /*+ NOPARALLEL */ INTO attendance_open_log " +
-                                " (open_id, subject_id, bssid, open_datetime, close_datetime, week_number, session_date) " +
-                                " VALUES (attendance_open_log_seq.NEXTVAL, ?, ?, SYSTIMESTAMP, NULL, ?, ?)";
-                try (PreparedStatement ps = conn.prepareStatement(INS)) {
-                    ps.setQueryTimeout(SQL_TIMEOUT_SEC);
-                    ps.setInt(1, subjectId);
-                    ps.setString(2, bssid);
-                    ps.setInt(3, week);
-                    ps.setDate(4, sessionDate);
-                    ps.executeUpdate();
-                }
-
-                // 2) 방금 연 open_id 조회 (가장 최근 row)
-                Long openId = null;
-                final String SEL_LAST =
-                        "SELECT open_id FROM attendance_open_log " +
-                                " WHERE subject_id = ? AND close_datetime IS NULL " +
-                                " ORDER BY open_datetime DESC FETCH FIRST 1 ROWS ONLY";
-                try (PreparedStatement ps = conn.prepareStatement(SEL_LAST)) {
-                    ps.setQueryTimeout(SQL_TIMEOUT_SEC);
-                    ps.setInt(1, subjectId);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        if (rs.next()) {
-                            openId = rs.getLong(1);
+                // 🔹 기존 결석 → 지각 자동 처리 (학생 개별 출석 시점 예시)
+                // ※ 실제 구현에서는 학생 ID, open_id가 들어와야 함
+                String studentId = req.getParameter("studentId");
+                if (studentId != null && !studentId.isEmpty()) {
+                    String check = "SELECT status FROM attendance_records WHERE subject_id=? AND student_id=? AND week_number=?";
+                    try (PreparedStatement ps = conn.prepareStatement(check)) {
+                        ps.setInt(1, subjectId);
+                        ps.setString(2, studentId);
+                        ps.setInt(3, week);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (rs.next()) {
+                                String cur = rs.getString("status");
+                                if ("결석".equals(cur)) {
+                                    String upd = "UPDATE attendance_records SET status='지각', last_modified_at=SYSTIMESTAMP WHERE subject_id=? AND student_id=? AND week_number=?";
+                                    try (PreparedStatement psu = conn.prepareStatement(upd)) {
+                                        psu.setInt(1, subjectId);
+                                        psu.setString(2, studentId);
+                                        psu.setInt(3, week);
+                                        psu.executeUpdate();
+                                        System.out.println("[StartAttendance] 결석→지각 자동 변경: " + studentId);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                // 3) subjects에 교수 BSSID 반영(선택)
-                final String UPD_SUBJ =
-                        "UPDATE /*+ NOPARALLEL */ subjects SET professor_bssid = ? WHERE subject_id = ?";
-                try (PreparedStatement ps = conn.prepareStatement(UPD_SUBJ)) {
+                // 🔹 출석 세션 기록 (기존 로직)
+                final String INSERT_LOG =
+                        "INSERT INTO attendance_open_log (open_id, subject_id, bssid, open_datetime, close_datetime, week_number) " +
+                                "VALUES (attendance_open_log_seq.NEXTVAL, ?, ?, SYSTIMESTAMP, NULL, ?)";
+                try (PreparedStatement ps = conn.prepareStatement(INSERT_LOG)) {
                     ps.setQueryTimeout(SQL_TIMEOUT_SEC);
+                    ps.setInt(1, subjectId);
+                    ps.setString(2, bssid);
+                    ps.setInt(3, week);
+                    ps.executeUpdate();
+                }
+                // ✅ [추가] 교수 BSSID를 subjects 테이블에도 저장
+                final String UPDATE_SUBJECT_BSSID =
+                        "UPDATE subjects SET professor_bssid = ? WHERE subject_id = ?";
+                try (PreparedStatement ps = conn.prepareStatement(UPDATE_SUBJECT_BSSID)) {
                     ps.setString(1, bssid);
                     ps.setInt(2, subjectId);
                     ps.executeUpdate();
+                    logger.info("[StartAttendance] subjects 테이블에 BSSID 저장 완료 (" + bssid + ")");
                 }
 
                 conn.commit();
-
-                // 인메모리 상태 반영(필요 시)
-                InMemoryDB.ATTENDANCE.put(subjectId, new java.util.HashSet<>());
-
-                // 응답
+                JsonObject result = new JsonObject();
                 result.addProperty("result", "started");
-                if (openId != null) result.addProperty("openId", openId);
                 result.addProperty("subjectId", subjectId);
-                result.addProperty("bssid", bssid);
                 result.addProperty("week", week);
-                result.addProperty("sessionDate", sessionDate.toString()); // yyyy-MM-dd
-                result.addProperty("startAt", java.time.OffsetDateTime.now().toString());
-                out.print(result.toString());
-                out.flush(); resp.flushBuffer();
-                wrote = true;
-
-            } catch (Exception e) {
-                logger.severe("startAttendance DB error: " + e.getMessage());
-                resp.setStatus(500);
-                JsonObject err = new JsonObject();
-                err.addProperty("result", "error");
-                err.addProperty("message", "DB 오류: " + e.getMessage());
-                out.print(err.toString());
-                out.flush(); resp.flushBuffer();
-                wrote = true;
+                out.write(result.toString());
             }
-
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            resp.setStatus(503);
-            out.write("{\"result\":\"busy\"}");
-            out.flush(); resp.flushBuffer();
-            wrote = true;
 
         } catch (Exception e) {
+            e.printStackTrace();
             resp.setStatus(500);
-            JsonObject err = new JsonObject();
-            err.addProperty("result", "error");
-            err.addProperty("message", e.getMessage());
-            out.print(err.toString());
-            out.flush(); resp.flushBuffer();
-            wrote = true;
-
+            out.write("{\"result\":\"error\",\"message\":\"" + e.getMessage() + "\"}");
         } finally {
             if (ok) GUARD.release();
-            if (!resp.isCommitted() && !wrote) {
-                resp.setStatus(500);
-                out.write("{\"result\":\"error\",\"message\":\"empty response\"}");
-                out.flush(); resp.flushBuffer();
-            }
         }
     }
 }

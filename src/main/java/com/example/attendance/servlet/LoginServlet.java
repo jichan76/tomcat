@@ -14,6 +14,7 @@ import java.util.concurrent.Semaphore;       // [ADDED]
 import java.util.concurrent.TimeUnit;        // [ADDED]
 import java.util.regex.Matcher;              // [ADDED]
 import java.util.regex.Pattern;              // [ADDED]
+import java.util.logging.Logger;
 
 @WebServlet("/LoginServlet")
 public class LoginServlet extends HttpServlet {
@@ -29,6 +30,8 @@ public class LoginServlet extends HttpServlet {
     private static final Semaphore GUARD_ALL    = new Semaphore(MAX_CONCURRENT_ALL, true);   // [ADDED]
     private static final Semaphore GUARD_BCRYPT = new Semaphore(MAX_CONCURRENT_BCRYPT, true);// [ADDED]
     private static final Pattern COST_PAT = Pattern.compile("\\$2[aby]\\$(\\d{2})\\$");       // [ADDED]
+
+    private static final Logger logger = Logger.getLogger(LoginServlet.class.getName());
 
     static { // [ADDED]
         try {
